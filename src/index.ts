@@ -1,70 +1,119 @@
+import yargs from "yargs";
 import { readFile } from "./fs";
-import { underline, warning } from "./log";
+import { link, success, underline, warning } from "./log";
 import {
   getAllFiles,
   isConstantsFile,
   removeDeclarationsFromFile,
 } from "./fileUtils";
-import { findImports, parseVariableDeclaration } from "./parseUtils";
-
-const args = process.argv.slice(2);
-const CLEAN = args.includes("--clean");
-const SEARCH_PATH = args.find((arg) => !arg.startsWith("--")) || ".";
+import { findImports, findUnusedVariablesInFile, parseFile } from "./parseUtils";
 
 type DeclarationMap = {
   [key: string]: string[];
 };
 
-async function main(directory: string) {
-  const files = getAllFiles(directory, []);
-  const variableDeclarationsMap: DeclarationMap = {};
+interface CodeSweeperArgs {
+  clean: boolean;
+  deepCheck: boolean;
+  _: string[];
+  $0: string; // The script name or path
+}
 
+async function main(argv: CodeSweeperArgs) {
+  const path = argv._[0] || '.';
+  const files = getAllFiles(path, []);
+  const unusedDeclarationsByFile: DeclarationMap = {};
+  let fileCount = 0;
+  let variableCount = 0;
+
+  // Parses all constants files and store their variable declarations
   files.forEach((file) => {
     if (isConstantsFile(file)) {
       const content = readFile(file);
-      const variableDeclarations = parseVariableDeclaration(content);
-      variableDeclarationsMap[file] = variableDeclarations;
+      const ast = parseFile(content, ["jsx"]);
+
+      const unusedDeclarations = findUnusedVariablesInFile(ast, argv.deepCheck);
+
+      unusedDeclarationsByFile[file] = unusedDeclarations;
     }
   });
 
   files.forEach((file) => {
     const declarations: string[] = Object.values(
-      variableDeclarationsMap,
+      unusedDeclarationsByFile,
     ).flat();
     const content = readFile(file);
-    const foundImports = findImports(content, declarations);
+    const imports = findImports(content, declarations);
 
-    foundImports.forEach((declaration) => {
-      const declarationFile = Object.keys(variableDeclarationsMap).find(
-        (file) => variableDeclarationsMap[file].includes(declaration),
+    imports.forEach((declaration) => {
+      const declarationFile = Object.keys(unusedDeclarationsByFile).find(
+        (file) => unusedDeclarationsByFile[file].includes(declaration),
       );
 
       if (declarationFile) {
-        variableDeclarationsMap[declarationFile] = variableDeclarationsMap[
+        unusedDeclarationsByFile[declarationFile] = unusedDeclarationsByFile[
           declarationFile
         ].filter((decl) => decl !== declaration);
       }
     });
   });
 
-  Object.keys(variableDeclarationsMap).forEach((file) => {
-    if (variableDeclarationsMap[file].length > 0) {
+  Object.keys(unusedDeclarationsByFile).forEach((file) => {
+    let output = "";
+
+    if (unusedDeclarationsByFile[file].length > 0) {
       console.log(underline(file));
-      variableDeclarationsMap[file].forEach((declaration) => {
-        console.log(
-          `${warning("warning")}\tdeclaration '${declaration}' not used within other modules\n`,
-        );
+      
+      unusedDeclarationsByFile[file].forEach((declaration) => {
+        if (argv.clean) {
+          output += `${success("removed")}\tdeclaration '${declaration}'\n`;
+        } else {
+          output += `${warning("warning")}\tdeclaration '${declaration}' not used within other modules\n`;
+        }
+
+        variableCount++;
       });
+
+      console.log(output);
     }
 
-    if (CLEAN) {
-      removeDeclarationsFromFile(file, variableDeclarationsMap[file]);
+    if (argv.clean && unusedDeclarationsByFile[file].length > 0) {
+       removeDeclarationsFromFile(file, unusedDeclarationsByFile[file]);
+       fileCount++;
     }
   });
 
-  if (Object.keys(variableDeclarationsMap).length === 0 && !CLEAN) {
-    console.log(`To remove unused declarations, run with the --clean flag`);
+  if (argv.clean) {
+    console.log(success(`Removed ${variableCount} declarations from ${fileCount} files`));
+  } else if (variableCount === 0) {
+    console.log(success("No unused declarations found"));
+  } else {
+    console.log(warning(`Found ${variableCount} unused declarations, run with the --clean flag to remove`));
   }
+
+  console.log(link(`\nFeel free to contribute to this project at ${underline("https://github.com/Vemassa/code-sweeper")}`));
 }
 
-main(SEARCH_PATH);
+const argv = yargs
+  .scriptName('code-sweeper')
+  .usage('$0 [options]')
+  .option('clean', {
+    describe: 'Perform a standard clean-up operation',
+    type: 'boolean',
+    default: false,
+  })
+  .option('deep-check', {
+    describe: 'Perform a deep check of the code for issues, typically detects declarations that would also become unused after a clean-up',
+    type: 'boolean',
+    default: false,
+  })
+  .help('help')
+  .alias('help', 'h')
+  .example([
+    ['$0 --clean', 'Perform a standard clean-up operation'],
+    ['$0 --deep-check', 'Perform a deep check of the code for issues, typically detects declarations that would also become unused after a clean-up']
+  ])
+  .wrap(yargs.terminalWidth())
+  .parse();
+
+main(argv as CodeSweeperArgs);

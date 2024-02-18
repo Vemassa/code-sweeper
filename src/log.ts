@@ -5,3 +5,4 @@ export const warning = (message: string) => styled("33", message);
 export const error = (message: string) => styled("31", message);
 export const success = (message: string) => styled("32", message);
 export const underline = (message: string) => styled("4", message);
+export const link = (message: string) => styled("34", message);

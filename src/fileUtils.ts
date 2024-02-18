@@ -1,6 +1,5 @@
 import path from "path";
 import { isDirectory, readDir, readFile, writeFile } from "./fs";
-import { success } from "./log";
 
 const IGNORED_DIRECTORIES = ["node_modules", "dist", "build"];
 const ALLOWED_EXTENSIONS = [".js", ".jsx", ".ts", ".tsx"];
@@ -13,12 +12,13 @@ export function isFileIgnored(fileName: string): boolean {
   return !ALLOWED_EXTENSIONS.some((ext) => fileName.endsWith(ext));
 }
 
+export function isJsOrTsFile(fileName: string): boolean {
+  return fileName.endsWith(".js") || fileName.endsWith(".ts");
+}
+
 // Arbitrary checks for constants file, let's improve this later
 export function isConstantsFile(fileName: string): boolean {
-  return (
-    fileName.includes("constants") &&
-    (fileName.endsWith(".js") || fileName.endsWith(".ts"))
-  );
+  return fileName.toLowerCase().includes("constants") && isJsOrTsFile(fileName);
 }
 
 /**
@@ -42,12 +42,7 @@ export function getAllFiles(
       if (!isDirectoryIgnored(file)) {
         arrayOfFiles = getAllFiles(fullPath, arrayOfFiles);
       }
-    } else if (
-      fullPath.endsWith(".js") ||
-      fullPath.endsWith(".jsx") ||
-      fullPath.endsWith(".ts") ||
-      fullPath.endsWith(".tsx")
-    ) {
+    }else if (!isFileIgnored(file)) {
       arrayOfFiles.push(fullPath);
     }
   });
@@ -64,14 +59,15 @@ export function removeDeclarationsFromFile(
   const fileContent = readFile(filePath);
   // Convert the file content into an array of lines
   const lines = fileContent.split('\n');
+
   // Prepare a regular expression to match any of the constants
-  const constantsRegex = new RegExp(`\\b(${constants.join('|')})\\b`, 'g');
+  const constantsRegex = new RegExp(`.*\\b(const|let|var)\\s+(${constants.join('|')})\\s*=.*;\\s*`);
+
   // Filter out lines containing any of the constants
-  const filteredLines = lines.filter(line => !constantsRegex.test(line));
+  const filteredLines = lines.filter((line) => !constantsRegex.test(line));
+
   // Join the remaining lines back into a single string
   const newFileContent = filteredLines.join('\n');
-
-  console.log(success(`Removed declarations from ${filePath}`));
 
   writeFile(filePath, newFileContent);
 }
